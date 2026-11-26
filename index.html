@@ -40,6 +40,11 @@
   .panel h2 { margin: 0; font-size: 34px; color: #0b7f7a; }
   .panel .hint { margin: 0; font-size: 18px; color: #5a6f75; }
   label { font-size: 22px; font-weight: 700; margin-top: 8px; }
+  #store {
+    font: inherit; font-size: 28px; font-weight: 700; padding: 12px 16px; border: 3px solid #b9cbcf; border-radius: 16px;
+    width: 100%; background: #fff; color: #10262e;
+  }
+  #store:focus { outline: none; border-color: #0b7f7a; }
   #plate {
     font: inherit; font-size: 40px; font-weight: 700; letter-spacing: 4px; text-align: center; text-transform: uppercase;
     padding: 16px; border: 3px solid #b9cbcf; border-radius: 16px; width: 100%;
@@ -88,6 +93,8 @@
   <section class="panel">
     <h2 id="title"></h2>
     <p class="hint" id="hint"></p>
+    <label for="store">門市</label>
+    <select id="store"></select>
     <label for="plate">車主車牌</label>
     <input id="plate" placeholder="例：ABC-1234" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false">
     <button id="go">轉動</button>
@@ -114,6 +121,17 @@ const HINTS = { A: '車主推薦客人來店賞車試乘，可轉一次', B: '�
 const SPIN_MS = 5000;
 let wheel = 'A', rotation = 0, spinning = false;
 const cv = $('wheel');
+const STORE_KEY = 'wheelStore';
+
+async function loadStores() {
+  try {
+    const names = await rpc('get_stores', {});
+    let saved = ''; try { saved = localStorage.getItem(STORE_KEY) || ''; } catch {}
+    $('store').replaceChildren(...names.map(n => Object.assign(document.createElement('option'), { value: n, textContent: n })));
+    if (names.includes(saved)) $('store').value = saved; // 記住這台平板上次選的門市
+  } catch (e) { $('msg').textContent = e.message; }
+}
+$('store').onchange = () => { try { localStorage.setItem(STORE_KEY, $('store').value); } catch {} $('msg').textContent = ''; load(); }; // 各門市庫存獨立，換門市就換轉盤
 
 function draw(items) {
   const size = cv.clientWidth, dpr = window.devicePixelRatio || 1, r = size / 2, n = items.length;
@@ -156,7 +174,7 @@ async function load() {
   $('title').textContent = `轉盤 ${wheel}｜${WHEEL_NAMES[wheel]}`;
   $('hint').textContent = HINTS[wheel];
   try {
-    const d = await rpc('get_wheel', { p_wheel: wheel });
+    const d = await rpc('get_wheel', { p_wheel: wheel, p_store: $('store').value });
     draw(d.available);
     showSoldout(d.soldout);
     $('go').disabled = !d.available.length;
@@ -166,12 +184,13 @@ async function load() {
 async function go() {
   if (spinning) return;
   const plate = $('plate').value.replace(/\s/g, '').toUpperCase();
+  if (!$('store').value) { $('msg').textContent = '請先選擇門市'; return; }
   if (!plate) { $('msg').textContent = '請先輸入車主車牌'; $('plate').focus(); return; }
   $('plate').blur();
   spinning = true; $('go').disabled = true; $('msg').textContent = '';
-  document.querySelectorAll('.tab').forEach(b => b.disabled = true);
+  document.querySelectorAll('.tab').forEach(b => b.disabled = true); $('store').disabled = true;
   try {
-    const res = await rpc('spin', { p_wheel: wheel, p_plate: plate }); // 中獎結果由資料庫決定
+    const res = await rpc('spin', { p_wheel: wheel, p_plate: plate, p_store: $('store').value }); // 中獎結果由資料庫決定
     draw(res.wheel);
     const n = res.wheel.length, segDeg = 360 / n;
     const i = res.wheel.findIndex(p => p.id === res.prize_id);
@@ -186,7 +205,7 @@ async function go() {
     $('result').hidden = false;
   } catch (e) {
     $('msg').textContent = e.message;
-    spinning = false;
+    spinning = false; $('store').disabled = false;
     document.querySelectorAll('.tab').forEach(b => b.disabled = false);
     load();
   }
@@ -195,7 +214,7 @@ async function go() {
 $('next').onclick = () => {
   $('result').hidden = true;
   $('plate').value = '';
-  spinning = false;
+  spinning = false; $('store').disabled = false;
   document.querySelectorAll('.tab').forEach(b => b.disabled = false);
   load();
 };
@@ -206,7 +225,7 @@ document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
   wheel = b.dataset.w; $('msg').textContent = ''; load();
 });
 addEventListener('resize', () => { if (!spinning) load(); });
-load();
+loadStores().then(load);
 </script>
 </body>
 </html>
