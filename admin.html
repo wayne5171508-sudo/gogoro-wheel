@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>抽獎後台</title>
+<style>
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; font-family: -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; background: #eef4f5; color: #10262e; font-size: 18px; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  h1 { margin: 0 0 16px; font-size: 30px; }
+  h2 { margin: 28px 0 12px; font-size: 24px; color: #0b7f7a; }
+  .box { background: #fff; border-radius: 18px; padding: 20px; box-shadow: 0 6px 20px rgba(16,38,46,.08); }
+  #login { max-width: 420px; margin: 12vh auto; display: flex; flex-direction: column; gap: 14px; }
+  input { font: inherit; padding: 12px 14px; border: 2px solid #b9cbcf; border-radius: 12px; }
+  input:focus { outline: none; border-color: #0b7f7a; }
+  button { font: inherit; font-weight: 700; padding: 12px 22px; border: 0; border-radius: 12px; background: #0b7f7a; color: #fff; cursor: pointer; white-space: nowrap; }
+  button.ghost { background: #fff; color: #0b7f7a; border: 2px solid #0b7f7a; }
+  .err { color: #d8261b; font-weight: 700; min-height: 24px; margin: 0; }
+  .bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .bar .sp { flex: 1; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 10px 12px; border-bottom: 1px solid #e1eaec; text-align: left; }
+  th { background: #f4f8f9; font-size: 16px; color: #5a6f75; }
+  td input { width: 100%; }
+  td.num input { width: 110px; text-align: right; }
+  .zero { color: #d8261b; font-weight: 700; }
+  .grid { display: grid; gap: 20px; }
+  .records { max-height: 60vh; overflow: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="login" class="box">
+    <h1>抽獎後台</h1>
+    <input id="pw" type="password" placeholder="請輸入後台密碼" autocomplete="current-password">
+    <button id="loginBtn">登入</button>
+    <p class="err" id="loginErr"></p>
+  </div>
+
+  <div id="main" hidden>
+    <div class="bar">
+      <h1>抽獎後台</h1><span class="sp"></span>
+      <button class="ghost" id="reload">重新整理</button>
+      <button id="csv">匯出中獎紀錄 CSV</button>
+      <button class="ghost" id="logout">登出</button>
+    </div>
+    <p class="err" id="err"></p>
+    <div class="grid" id="prizes"></div>
+    <h2>中獎紀錄（共 <span id="count">0</span> 筆）</h2>
+    <div class="box records">
+      <table>
+        <thead><tr><th>時間</th><th>車牌</th><th>轉盤</th><th>獎品</th></tr></thead>
+        <tbody id="spins"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let pw = sessionStorage.getItem('adminPw') || '';
+let spins = [];
+
+const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+const fmt = t => new Date(t).toLocaleString('zh-TW', { hour12: false });
+
+async function load() {
+  $('err').textContent = '';
+  let d;
+  try { d = await rpc('admin_data', { p_pw: pw }); }
+  catch (e) {
+    if (e.message === '密碼錯誤') { logout(); $('loginErr').textContent = '密碼錯誤'; }
+    else $('err').textContent = e.message;
+    return;
+  }
+  sessionStorage.setItem('adminPw', pw);
+  $('login').hidden = true; $('main').hidden = false;
+
+  $('prizes').replaceChildren(...['A', 'B'].map(w => {
+    const rows = d.prizes.filter(p => p.wheel === w).map(p => {
+      const name = el('input', { value: p.name });
+      const stock = el('input', { type: 'number', min: 0, value: p.stock });
+      const save = el('button', { textContent: '儲存', onclick: async () => {
+        save.disabled = true;
+        try { await rpc('admin_update_prize', { p_pw: pw, p_id: p.id, p_name: name.value, p_stock: parseInt(stock.value, 10) }); await load(); }
+        catch (e) { $('err').textContent = e.message; save.disabled = false; }
+      }});
+      return el('tr', {},
+        el('td', {}, name),
+        el('td', { className: 'num' }, stock),
+        el('td', { className: p.stock === 0 ? 'zero' : '', textContent: p.stock === 0 ? `${p.given}（已兌換完畢）` : p.given }),
+        el('td', {}, save));
+    });
+    return el('div', { className: 'box' },
+      el('h2', { textContent: `轉盤 ${w}｜${WHEEL_NAMES[w]}`, style: 'margin-top:0' }),
+      el('table', {},
+        el('thead', {}, el('tr', {}, ...['獎品名稱', '剩餘庫存', '已兌換', ''].map(t => el('th', { textContent: t })))),
+        el('tbody', {}, ...rows)));
+  }));
+
+  spins = d.spins;
+  $('count').textContent = spins.length;
+  $('spins').replaceChildren(...spins.map(s => el('tr', {},
+    el('td', { textContent: fmt(s.created_at) }), el('td', { textContent: s.plate }),
+    el('td', { textContent: `${s.wheel} ${WHEEL_NAMES[s.wheel]}` }), el('td', { textContent: s.prize_name }))));
+}
+
+function logout() {
+  pw = ''; sessionStorage.removeItem('adminPw');
+  $('main').hidden = true; $('login').hidden = false; $('pw').value = '';
+}
+
+function csv() {
+  const q = v => `"${String(v).replace(/"/g, '""')}"`;
+  const lines = [['時間', '車牌', '轉盤', '獎品'], ...spins.map(s => [fmt(s.created_at), s.plate, `${s.wheel} ${WHEEL_NAMES[s.wheel]}`, s.prize_name])];
+  // 開頭加 BOM，Excel 開中文才不會亂碼
+  const blob = new Blob(['﻿' + lines.map(l => l.map(q).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = el('a', { href: URL.createObjectURL(blob), download: `中獎紀錄_${new Date().toLocaleDateString('sv')}.csv` });
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+$('loginBtn').onclick = () => { pw = $('pw').value; $('loginErr').textContent = ''; load(); };
+$('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('loginBtn').click(); });
+$('reload').onclick = load;
+$('logout').onclick = logout;
+$('csv').onclick = csv;
+if (pw) load();
+</script>
+</body>
+</html>

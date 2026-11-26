@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>車主推薦抽獎</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    background: radial-gradient(circle at 30% 20%, #ffffff 0%, #eaf3f4 60%, #dbe8ea 100%);
+    color: #10262e; display: flex; flex-direction: column; overflow: hidden;
+  }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 16px 28px 0; gap: 16px; }
+  h1 { margin: 0; font-size: 30px; letter-spacing: 2px; }
+  nav { display: flex; gap: 12px; }
+  .tab {
+    font: inherit; font-size: 22px; font-weight: 700; padding: 14px 26px; border-radius: 16px;
+    border: 3px solid #0b7f7a; background: #fff; color: #0b7f7a; cursor: pointer;
+  }
+  .tab.on { background: #0b7f7a; color: #fff; }
+  .tab:disabled { opacity: .5; }
+  main { flex: 1; display: grid; grid-template-columns: 1.15fr 1fr; align-items: center; padding: 12px 28px 20px; gap: 28px; min-height: 0; }
+  .wheel-area { display: flex; flex-direction: column; align-items: center; gap: 12px; min-height: 0; }
+  .wheel-wrap { position: relative; width: min(66vh, 50vw); aspect-ratio: 1; }
+  #wheel {
+    width: 100%; height: 100%; border-radius: 50%;
+    box-shadow: 0 0 0 10px #10262e, 0 18px 40px rgba(16,38,46,.35);
+    transition: transform 5s cubic-bezier(.15,.75,.12,1);
+  }
+  .pointer {
+    position: absolute; top: -18px; left: 50%; transform: translateX(-50%); z-index: 2;
+    width: 0; height: 0; border-left: 24px solid transparent; border-right: 24px solid transparent;
+    border-top: 48px solid #e63b2e; filter: drop-shadow(0 3px 3px rgba(0,0,0,.35));
+  }
+  #soldout { min-height: 32px; text-align: center; }
+  #soldout p { margin: 2px 0; color: #d8261b; font-size: 22px; font-weight: 700; }
+  .panel { background: #fff; border-radius: 28px; padding: 32px; box-shadow: 0 10px 30px rgba(16,38,46,.12); display: flex; flex-direction: column; gap: 16px; }
+  .panel h2 { margin: 0; font-size: 34px; color: #0b7f7a; }
+  .panel .hint { margin: 0; font-size: 18px; color: #5a6f75; }
+  label { font-size: 22px; font-weight: 700; margin-top: 8px; }
+  #plate {
+    font: inherit; font-size: 40px; font-weight: 700; letter-spacing: 4px; text-align: center; text-transform: uppercase;
+    padding: 16px; border: 3px solid #b9cbcf; border-radius: 16px; width: 100%;
+  }
+  #plate:focus { outline: none; border-color: #0b7f7a; }
+  #go {
+    font: inherit; font-size: 40px; font-weight: 900; letter-spacing: 8px; padding: 22px; border: 0; border-radius: 20px;
+    background: linear-gradient(180deg, #ff6a3d, #e63b2e); color: #fff; cursor: pointer; box-shadow: 0 8px 0 #a8241a;
+  }
+  #go:active { transform: translateY(4px); box-shadow: 0 4px 0 #a8241a; }
+  #go:disabled { background: #b9c4c7; box-shadow: 0 8px 0 #8d9a9d; cursor: default; }
+  #msg { min-height: 30px; margin: 0; font-size: 22px; font-weight: 700; color: #d8261b; }
+  #result { position: fixed; inset: 0; background: rgba(8,24,30,.7); display: flex; align-items: center; justify-content: center; z-index: 10; }
+  #result[hidden] { display: none; }
+  .card { background: #fff; border-radius: 32px; padding: 48px 64px; text-align: center; animation: pop .45s cubic-bezier(.2,1.4,.4,1); min-width: 50vw; }
+  .card p { margin: 0 0 12px; font-size: 26px; }
+  .card .big { font-size: 64px; font-weight: 900; color: #e63b2e; margin: 16px 0 28px; }
+  .card button { font: inherit; font-size: 30px; font-weight: 700; padding: 16px 64px; border: 0; border-radius: 16px; background: #0b7f7a; color: #fff; cursor: pointer; }
+  /* 背景動畫場景（SVG 動畫圖鑑 SC-01，CC BY 4.0）：8:3 畫面裁切鋪滿、淡化，不吃點擊 */
+  #bg { position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%); z-index: -1;
+    width: max(100vw, 266.67vh); aspect-ratio: 8/3; border: 0; opacity: .45; pointer-events: none; }
+  #credit { position: fixed; right: 10px; bottom: 6px; font-size: 12px; color: #5a6f75; }
+  #credit a { color: inherit; }
+  @keyframes pop { from { transform: scale(.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  @media (orientation: portrait) {
+    main { grid-template-columns: 1fr; }
+    .wheel-wrap { width: min(80vw, 50vh); }
+  }
+</style>
+</head>
+<body>
+<iframe id="bg" src="scene.html" title="" aria-hidden="true" tabindex="-1" loading="lazy"></iframe>
+<small id="credit">背景場景出自「<a href="https://svg-scene-atlas.pages.dev/" target="_blank" rel="noopener">SVG 動畫圖鑑</a>」CC BY 4.0</small>
+<header>
+  <h1>車主推薦抽獎</h1>
+  <nav>
+    <button class="tab" data-w="A">轉盤 A｜推薦賞車試乘</button>
+    <button class="tab" data-w="B">轉盤 B｜推薦成功購車</button>
+  </nav>
+</header>
+<main>
+  <section class="wheel-area">
+    <div class="wheel-wrap"><div class="pointer"></div><canvas id="wheel"></canvas></div>
+    <div id="soldout"></div>
+  </section>
+  <section class="panel">
+    <h2 id="title"></h2>
+    <p class="hint" id="hint"></p>
+    <label for="plate">車主車牌</label>
+    <input id="plate" placeholder="例：ABC-1234" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    <button id="go">轉動</button>
+    <p id="msg"></p>
+  </section>
+</main>
+<div id="result" hidden>
+  <div class="card">
+    <p>車牌 <b id="rPlate"></b></p>
+    <p>恭喜獲得</p>
+    <p class="big" id="rPrize"></p>
+    <button id="next">下一位</button>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const COLORS = [
+  { bg: '#0b7f7a', fg: '#fff' }, { bg: '#f6c445', fg: '#10262e' }, { bg: '#10262e', fg: '#fff' },
+  { bg: '#ff6a3d', fg: '#fff' }, { bg: '#e8f1f2', fg: '#10262e' }, { bg: '#2f9fd6', fg: '#fff' },
+];
+const HINTS = { A: '車主推薦客人來店賞車試乘，可轉一次', B: '被推薦的客人成功購車，車主可再轉一次' };
+const SPIN_MS = 5000;
+let wheel = 'A', rotation = 0, spinning = false;
+const cv = $('wheel');
+
+function draw(items) {
+  const size = cv.clientWidth, dpr = window.devicePixelRatio || 1, r = size / 2, n = items.length;
+  cv.width = cv.height = size * dpr;
+  const ctx = cv.getContext('2d');
+  ctx.scale(dpr, dpr);
+  if (!n) {
+    ctx.fillStyle = '#c9d3d5'; ctx.beginPath(); ctx.arc(r, r, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#10262e'; ctx.font = `700 ${r * 0.1}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('獎品已全部兌換完畢', r, r);
+    return;
+  }
+  const seg = Math.PI * 2 / n;
+  items.forEach((it, i) => {
+    let c = COLORS[i % COLORS.length];
+    if (i === n - 1 && n > 1 && i % COLORS.length === 0) c = COLORS[2]; // 最後一格別跟第一格同色
+    const a0 = -Math.PI / 2 + i * seg;
+    ctx.beginPath(); ctx.moveTo(r, r); ctx.arc(r, r, r, a0, a0 + seg); ctx.closePath();
+    ctx.fillStyle = c.bg; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.save();
+    ctx.translate(r, r); ctx.rotate(a0 + seg / 2);
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillStyle = c.fg;
+    let fs = Math.min(r * 0.12, n > 1 ? r * Math.sin(seg / 2) * 0.5 : r);
+    do { ctx.font = `800 ${fs}px -apple-system, "PingFang TC", "Noto Sans TC", sans-serif`; fs -= 1; }
+    while (ctx.measureText(it.name).width > r * 0.66 && fs > 10);
+    ctx.fillText(it.name, r * 0.9, 0);
+    ctx.restore();
+  });
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(r, r, r * 0.12, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#10262e'; ctx.beginPath(); ctx.arc(r, r, r * 0.07, 0, Math.PI * 2); ctx.fill();
+}
+
+function showSoldout(names) {
+  $('soldout').replaceChildren(...names.map(n => Object.assign(document.createElement('p'), { textContent: `${n} 已兌換完畢` })));
+}
+
+async function load() {
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.w === wheel));
+  $('title').textContent = `轉盤 ${wheel}｜${WHEEL_NAMES[wheel]}`;
+  $('hint').textContent = HINTS[wheel];
+  try {
+    const d = await rpc('get_wheel', { p_wheel: wheel });
+    draw(d.available);
+    showSoldout(d.soldout);
+    $('go').disabled = !d.available.length;
+  } catch (e) { $('msg').textContent = e.message; }
+}
+
+async function go() {
+  if (spinning) return;
+  const plate = $('plate').value.replace(/\s/g, '').toUpperCase();
+  if (!plate) { $('msg').textContent = '請先輸入車主車牌'; $('plate').focus(); return; }
+  $('plate').blur();
+  spinning = true; $('go').disabled = true; $('msg').textContent = '';
+  document.querySelectorAll('.tab').forEach(b => b.disabled = true);
+  try {
+    const res = await rpc('spin', { p_wheel: wheel, p_plate: plate }); // 中獎結果由資料庫決定
+    draw(res.wheel);
+    const n = res.wheel.length, segDeg = 360 / n;
+    const i = res.wheel.findIndex(p => p.id === res.prize_id);
+    const jitter = (Math.random() - 0.5) * segDeg * 0.6;
+    const want = ((360 - (i + 0.5) * segDeg + jitter) % 360 + 360) % 360;
+    const now = ((rotation % 360) + 360) % 360;
+    rotation += 360 * 6 + ((want - now + 360) % 360);
+    cv.style.transform = `rotate(${rotation}deg)`;
+    await new Promise(r => setTimeout(r, SPIN_MS + 200));
+    $('rPlate').textContent = res.plate;
+    $('rPrize').textContent = res.prize_name;
+    $('result').hidden = false;
+  } catch (e) {
+    $('msg').textContent = e.message;
+    spinning = false;
+    document.querySelectorAll('.tab').forEach(b => b.disabled = false);
+    load();
+  }
+}
+
+$('next').onclick = () => {
+  $('result').hidden = true;
+  $('plate').value = '';
+  spinning = false;
+  document.querySelectorAll('.tab').forEach(b => b.disabled = false);
+  load();
+};
+$('go').onclick = go;
+$('plate').addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
+  if (spinning || b.dataset.w === wheel) return;
+  wheel = b.dataset.w; $('msg').textContent = ''; load();
+});
+addEventListener('resize', () => { if (!spinning) load(); });
+load();
+</script>
+</body>
+</html>
