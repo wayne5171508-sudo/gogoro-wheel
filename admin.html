@@ -29,10 +29,22 @@
   tr.off td { color: #8a9a9e; background: #f7f9f9; }
   tr.off td input { color: #8a9a9e; }
   td.acts { white-space: nowrap; } td.acts button { margin-right: 8px; }
+  button.danger-solid { background: #d8261b; }
   button.danger { color: #d8261b; border-color: #d8261b; }
   button:disabled { opacity: .5; cursor: default; }
+  .add { margin-top: 14px; padding-top: 14px; border-top: 2px dashed #e1eaec; }
+  .bar.picks { margin-top: 10px; }
+  label.pick { display: flex; gap: 8px; align-items: center; font-weight: 700; }
+  label.pick input[type=checkbox] { width: 22px; height: 22px; }
   .bar.add { margin-top: 14px; padding-top: 14px; border-top: 2px dashed #e1eaec; }
   .bar.add input:first-child { flex: 1; min-width: 160px; }
+  .modal { position: fixed; inset: 0; background: rgba(8,24,30,.55); display: flex; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
+  .modal .box { max-width: 460px; display: flex; flex-direction: column; gap: 14px; }
+  .modal p { margin: 0; }
+  .modal label { display: flex; gap: 10px; align-items: center; font-weight: 700; }
+  .modal input[type=checkbox] { width: 22px; height: 22px; }
+  .modal .bar { justify-content: flex-end; }
+  select { font: inherit; padding: 10px 12px; border: 2px solid #b9cbcf; border-radius: 12px; background: #fff; }
   input.sm { width: 100px; text-align: right; }
   .grid { display: grid; gap: 20px; }
   .records { max-height: 60vh; overflow: auto; }
@@ -51,15 +63,19 @@
     <div class="bar">
       <h1>抽獎後台</h1><span class="sp"></span>
       <button class="ghost" id="reload">重新整理</button>
-      <button id="csv">匯出中獎紀錄 CSV</button>
+      <button id="csv">匯出中獎紀錄 CSV（依目前篩選）</button>
       <button class="ghost" id="logout">登出</button>
     </div>
     <p class="err" id="err"></p>
+    <div class="bar" id="storeTabs" style="margin-bottom:14px"></div>
     <div class="grid" id="prizes"></div>
-    <h2>中獎紀錄（共 <span id="count">0</span> 筆）</h2>
+    <h2>門市</h2>
+    <div class="box" id="stores"></div>
+    <div class="bar"><h2 style="margin:28px 0 12px">中獎紀錄（共 <span id="count">0</span> 筆）</h2><span class="sp"></span>
+      <label for="storeFilter" style="font-weight:700">門市篩選</label><select id="storeFilter"></select></div>
     <div class="box records">
       <table>
-        <thead><tr><th>時間</th><th>車牌</th><th>轉盤</th><th>獎品</th></tr></thead>
+        <thead><tr><th>時間</th><th>門市</th><th>車牌</th><th>轉盤</th><th>獎品</th><th></th></tr></thead>
         <tbody id="spins"></tbody>
       </table>
     </div>
@@ -71,6 +87,12 @@
 const $ = id => document.getElementById(id);
 let pw = sessionStorage.getItem('adminPw') || '';
 let spins = [];
+let stores = [];
+let prizes = [];
+let stockRows = [];
+let curStore = 0; // 目前查看庫存的門市 id
+let storeFilter = ''; // '' = 全部；'__none' = 未記錄門市
+const NO_STORE = '（未記錄）';
 
 const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
 const fmt = t => new Date(t).toLocaleString('zh-TW', { hour12: false });
@@ -87,55 +109,137 @@ async function load() {
   sessionStorage.setItem('adminPw', pw);
   $('login').hidden = true; $('main').hidden = false;
 
+  prizes = d.prizes; stockRows = d.prize_stock;
+  stores = d.stores || [];
+  spins = d.spins;
+  if (!stores.some(t => t.id === curStore)) curStore = stores.length ? stores[0].id : 0;
+  renderPrizes();
+  renderStores();
+  renderSpins();
+}
+
+const run = async (btn, fn) => {
+  btn.disabled = true; $('err').textContent = '';
+  try { await fn(); await load(); }
+  catch (e) { $('err').textContent = e.message; btn.disabled = false; }
+};
+
+// 獎品與庫存：先選門市，下面顯示「該門市」的庫存；名稱、停用、刪除是全門市共用
+function renderPrizes() {
+  const store = stores.find(t => t.id === curStore);
+  $('storeTabs').replaceChildren(el('b', { textContent: '庫存門市：' }), ...stores.map(t =>
+    el('button', { className: t.id === curStore ? '' : 'ghost', textContent: t.name, onclick: () => { curStore = t.id; renderPrizes(); } })));
+  if (!store) { $('prizes').replaceChildren(); return; }
+  const stockOf = id => stockRows.find(r => r.prize_id === id && r.store_id === curStore);
+
   $('prizes').replaceChildren(...['A', 'B'].map(w => {
-    const list = d.prizes.filter(p => p.wheel === w);
-    const total = list.filter(p => p.active !== false).reduce((a, p) => a + p.stock, 0); // 目前轉盤上的庫存總和
-    const run = async (btn, fn) => {
-      btn.disabled = true; $('err').textContent = '';
-      try { await fn(); await load(); }
-      catch (e) { $('err').textContent = e.message; btn.disabled = false; }
-    };
+    const list = prizes.filter(p => p.wheel === w);
+    const total = list.filter(p => p.active !== false).reduce((a, p) => a + (stockOf(p.id)?.stock || 0), 0); // 這間門市轉盤上的庫存總和
     const rows = list.map(p => {
       const on = p.active !== false;
+      const st = stockOf(p.id); // 沒有 = 這間門市沒有這個獎品
       const name = el('input', { value: p.name });
-      const stock = el('input', { type: 'number', min: 0, value: p.stock });
-      const save = el('button', { textContent: '儲存', onclick: () => run(save, () =>
-        rpc('admin_update_prize', { p_pw: pw, p_id: p.id, p_name: name.value, p_stock: parseInt(stock.value, 10) })) });
+      const stock = el('input', { type: 'number', min: 0, value: st ? st.stock : '', placeholder: st ? '' : '未提供' });
+      const save = el('button', { textContent: st ? '儲存' : '加入此門市', onclick: () => run(save, () => {
+        const n = parseInt(stock.value, 10);
+        if (Number.isNaN(n)) throw new Error('請輸入庫存數量');
+        return rpc('admin_update_prize_store', { p_pw: pw, p_id: p.id, p_name: name.value, p_store_id: curStore, p_stock: n });
+      }) });
       const toggle = el('button', { className: 'ghost', textContent: on ? '停用' : '啟用', onclick: () => run(toggle, () =>
         rpc('admin_set_prize_active', { p_pw: pw, p_id: p.id, p_active: !on })) });
       const del = el('button', { className: 'ghost danger', textContent: '刪除', onclick: () => {
-        if (!confirm(`確定刪除「${p.name}」？此動作無法復原。`)) return;
+        if (!confirm(`確定刪除「${p.name}」？所有門市都會一起刪除，無法復原。`)) return;
         run(del, () => rpc('admin_delete_prize', { p_pw: pw, p_id: p.id }));
       }});
-      const chance = !on ? '已停用' : p.stock > 0 && total > 0 ? (p.stock / total * 100).toFixed(1) + '%' : '0%';
-      const tr = el('tr', { className: on ? '' : 'off' },
+      const rm = st ? el('button', { className: 'ghost danger', textContent: '此門市不提供', onclick: () => {
+        if (!confirm(`「${store.name}」不再提供「${p.name}」？其他門市不受影響。`)) return;
+        run(rm, () => rpc('admin_remove_prize_store', { p_pw: pw, p_id: p.id, p_store_id: curStore }));
+      }}) : '';
+      const chance = !on ? '已停用' : !st ? '未提供' : st.stock > 0 && total > 0 ? (st.stock / total * 100).toFixed(1) + '%' : '0%';
+      return el('tr', { className: on && st ? '' : 'off' },
         el('td', {}, name),
         el('td', { className: 'num' }, stock),
-        el('td', { className: on && p.stock === 0 ? 'zero' : '', textContent: on && p.stock === 0 ? `${p.given}（已兌換完畢）` : p.given }),
+        el('td', { className: on && st && st.stock === 0 ? 'zero' : '', textContent: !st ? '-' : on && st.stock === 0 ? `${st.given}（已兌換完畢）` : st.given }),
         el('td', { textContent: chance }),
-        el('td', { className: 'acts' }, save, toggle, del));
-      return tr;
+        el('td', { className: 'acts' }, save, toggle, del, rm));
     });
 
+    // 新增獎品：勾選要放在哪些門市，各自填庫存
     const nName = el('input', { placeholder: '新獎品名稱' });
-    const nStock = el('input', { type: 'number', min: 0, value: 10, className: 'sm' });
-    const add = el('button', { textContent: '新增獎品', onclick: () => run(add, async () => {
-      await rpc('admin_add_prize', { p_pw: pw, p_wheel: w, p_name: nName.value, p_stock: parseInt(nStock.value, 10) });
+    const picks = stores.map(t => {
+      const cb = el('input', { type: 'checkbox', checked: true });
+      const n = el('input', { type: 'number', min: 0, value: 10, className: 'sm' });
+      return { t, cb, n, node: el('label', { className: 'pick' }, cb, `${t.name} 庫存`, n) };
+    });
+    const add = el('button', { textContent: '新增獎品', onclick: () => run(add, () => {
+      const p_stocks = {};
+      picks.filter(x => x.cb.checked).forEach(x => { p_stocks[x.t.id] = parseInt(x.n.value, 10); });
+      if (Object.values(p_stocks).some(Number.isNaN)) throw new Error('請輸入庫存數量');
+      return rpc('admin_add_prize', { p_pw: pw, p_wheel: w, p_name: nName.value, p_stocks });
     }) });
 
     return el('div', { className: 'box' },
-      el('h2', { textContent: `轉盤 ${w}｜${WHEEL_NAMES[w]}`, style: 'margin-top:0' }),
+      el('h2', { textContent: `轉盤 ${w}｜${WHEEL_NAMES[w]}｜${store.name}`, style: 'margin-top:0' }),
       el('table', {},
-        el('thead', {}, el('tr', {}, ...['獎品名稱', '剩餘庫存', '已兌換', '目前中獎機率', ''].map(t => el('th', { textContent: t })))),
+        el('thead', {}, el('tr', {}, ...['獎品名稱（全門市共用）', '剩餘庫存', '已兌換', '目前中獎機率', ''].map(t => el('th', { textContent: t })))),
         el('tbody', {}, ...rows)),
-      el('div', { className: 'bar add' }, nName, el('span', { textContent: '庫存' }), nStock, add));
+      el('div', { className: 'add' }, el('div', { className: 'bar' }, nName, add),
+        el('div', { className: 'bar picks' }, ...picks.map(x => x.node))));
   }));
+}
 
-  spins = d.spins;
-  $('count').textContent = spins.length;
-  $('spins').replaceChildren(...spins.map(s => el('tr', {},
-    el('td', { textContent: fmt(s.created_at) }), el('td', { textContent: s.plate }),
-    el('td', { textContent: `${s.wheel} ${WHEEL_NAMES[s.wheel]}` }), el('td', { textContent: s.prize_name }))));
+function renderStores() {
+  const rows = stores.map(t => {
+    const name = el('input', { value: t.name });
+    const save = el('button', { textContent: '儲存', onclick: () => run(save, () => rpc('admin_update_store', { p_pw: pw, p_id: t.id, p_name: name.value })) });
+    const del = el('button', { className: 'ghost danger', textContent: '刪除', onclick: () => {
+      if (!confirm(`確定刪除門市「${t.name}」？\n（該門市的獎品庫存會一併刪除；過去的中獎紀錄仍保留店名）`)) return;
+      run(del, () => rpc('admin_delete_store', { p_pw: pw, p_id: t.id }));
+    }});
+    return el('tr', {}, el('td', {}, name), el('td', { className: 'acts' }, save, del));
+  });
+  const nName = el('input', { placeholder: '新門市名稱' });
+  const add = el('button', { textContent: '新增門市', onclick: () => run(add, () => rpc('admin_add_store', { p_pw: pw, p_name: nName.value })) });
+  $('stores').replaceChildren(
+    el('table', {}, el('thead', {}, el('tr', {}, ...['門市名稱', ''].map(t => el('th', { textContent: t })))), el('tbody', {}, ...rows)),
+    el('div', { className: 'bar add' }, nName, add));
+
+  // 篩選選單：全部 / 每間門市 / 已刪除或未記錄的店名
+  const names = [...new Set([...stores.map(t => t.name), ...spins.map(s => s.store).filter(Boolean)])];
+  const opts = [['', '全部門市'], ...names.map(n => [n, n]), ['__none', NO_STORE]];
+  if (!opts.some(o => o[0] === storeFilter)) storeFilter = '';
+  $('storeFilter').replaceChildren(...opts.map(([v, t]) => el('option', { value: v, textContent: t })));
+  $('storeFilter').value = storeFilter;
+}
+
+const shownSpins = () => spins.filter(s => !storeFilter || (storeFilter === '__none' ? !s.store : s.store === storeFilter));
+
+function renderSpins() {
+  const list = shownSpins();
+  $('count').textContent = list.length;
+  $('spins').replaceChildren(...list.map(s => el('tr', {},
+    el('td', { textContent: fmt(s.created_at) }), el('td', { textContent: s.store || NO_STORE }), el('td', { textContent: s.plate }),
+    el('td', { textContent: `${s.wheel} ${WHEEL_NAMES[s.wheel]}` }), el('td', { textContent: s.prize_name }),
+    el('td', {}, el('button', { className: 'ghost danger', textContent: '刪除', onclick: () => askDeleteSpin(s) })))));
+}
+
+// 刪除中獎紀錄：二次確認，預設不加回庫存，可勾選一併加回
+function askDeleteSpin(s) {
+  const restock = el('input', { type: 'checkbox' });
+  const close = () => modal.remove();
+  const ok = el('button', { className: 'danger-solid', textContent: '確定刪除', onclick: async () => {
+    ok.disabled = true;
+    try { await rpc('admin_delete_spin', { p_pw: pw, p_id: s.id, p_restock: restock.checked }); close(); await load(); }
+    catch (e) { close(); $('err').textContent = e.message; }
+  }});
+  const modal = el('div', { className: 'modal' }, el('div', { className: 'box' },
+    el('h2', { textContent: '刪除這筆中獎紀錄？', style: 'margin:0' }),
+    el('p', { textContent: `${fmt(s.created_at)}｜${s.store || NO_STORE}｜${s.plate}｜轉盤 ${s.wheel}｜${s.prize_name}` }),
+    el('p', { textContent: '刪除後無法復原。預設不會把庫存加回去。', className: 'err' }),
+    s.store_id ? el('label', {}, restock, `同時把「${s.prize_name}」在「${s.store}」的庫存加回 1`)
+               : el('p', { textContent: '這是舊紀錄，沒有記錄門市，無法加回庫存。' }),
+    el('div', { className: 'bar' }, el('button', { className: 'ghost', textContent: '取消', onclick: close }), ok)));
+  document.body.append(modal);
 }
 
 function logout() {
@@ -145,7 +249,7 @@ function logout() {
 
 function csv() {
   const q = v => `"${String(v).replace(/"/g, '""')}"`;
-  const lines = [['時間', '車牌', '轉盤', '獎品'], ...spins.map(s => [fmt(s.created_at), s.plate, `${s.wheel} ${WHEEL_NAMES[s.wheel]}`, s.prize_name])];
+  const lines = [['時間', '門市', '車牌', '轉盤', '獎品'], ...shownSpins().map(s => [fmt(s.created_at), s.store || NO_STORE, s.plate, `${s.wheel} ${WHEEL_NAMES[s.wheel]}`, s.prize_name])];
   // 開頭加 BOM，Excel 開中文才不會亂碼
   const blob = new Blob(['﻿' + lines.map(l => l.map(q).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
   const a = el('a', { href: URL.createObjectURL(blob), download: `中獎紀錄_${new Date().toLocaleDateString('sv')}.csv` });
@@ -157,6 +261,7 @@ $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('loginBtn').
 $('reload').onclick = load;
 $('logout').onclick = logout;
 $('csv').onclick = csv;
+$('storeFilter').onchange = () => { storeFilter = $('storeFilter').value; renderSpins(); };
 if (pw) load();
 </script>
 </body>
